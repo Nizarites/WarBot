@@ -145,8 +145,11 @@ class RedBase extends Base implements RedRobot {
 
         if (ennemyBase != null) {
           for (Robot redRobot : (ArrayList<Robot>) this.perceiveRobots(friend)) {
+              if(redRobot instanceof RedExplorer){
+                continue;
+              }
               informAboutTarget(redRobot, ennemyBase);
-              println("BASE LOCALISEE... MSG ENVOYE");
+              println("KILL THIS DAMN BASE MSG SENT");
           }
         }
       }  }
@@ -200,6 +203,7 @@ class RedExplorer extends Explorer implements RedRobot {
     // depending on the state of the robot
     if (brain[4].x == 1) {
       // go back to base...
+      println("I GO TO BASE o7");
       goBackToBase();
     } else {
       // ...or explore randomly
@@ -261,6 +265,26 @@ class RedExplorer extends Explorer implements RedRobot {
   void goBackToBase() {
     // bob is the closest base
     Base bob = (Base)minDist(myBases);
+    ArrayList<RedBase> allyBases = (ArrayList<RedBase>) perceiveRobots(friend, BASE);
+    if(allyBases != null){
+      for(RedBase allyBase : allyBases){
+        if(brain[4].y == 1 && brain[0].z == BASE){ // If target locked is ennemy base
+          // Identify ennemy base with its position
+          Robot ennemyBase = null;
+          for (Robot greenBase : game.greenBases) {
+            if (greenBase.pos.equals(brain[0])) {
+              ennemyBase = greenBase;
+              break;
+            }
+          }
+          if(ennemyBase != null){
+            informAboutTarget(allyBase, ennemyBase);
+          }
+          brain[4].y = 0; // Explorer has no more target
+        }
+      }
+    }
+
     if (bob != null) {
       // if there is one (not all of my bases have been destroyed)
       float dist = distance(bob);
@@ -341,23 +365,26 @@ class RedExplorer extends Explorer implements RedRobot {
     // look for an ennemy base
     Base babe = (Base)oneOf(perceiveRobots(ennemy, BASE));
     if (babe != null) { 
+      // Stock information about localized base
+      setTarget(babe.pos, BASE);
+      brain[4].x = 1;
+      println("BASE TARGET SET");
+
       // if one is seen, look for a friend explorer
       Explorer explo = (Explorer)oneOf(perceiveRobots(friend, EXPLORER));
       if (explo != null){
         // if one is seen, send a message with the localized ennemy base
         informAboutTarget(explo, babe);
-        println("BASE LOCALISEE... lookForEnnemyBase 1");
-
+        println("EXPLORATOR INFORMED ABOUT ENNEMY BASE");
       }
       // look for a friend base
+      // This condition seems weird as it would mean that we look for our base while perceiving an ennemy base
       Base basy = (Base)oneOf(perceiveRobots(friend, BASE));
       if (basy != null){
         // if one is seen, send a message with the localized ennemy base
         informAboutTarget(basy, babe);
-        println("BASE LOCALISEE... lookForEnnemyBase 2");
+        println("BASE ALLIEE LOCALISEE");
       }
-
-
     }
   }
 
