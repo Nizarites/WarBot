@@ -125,7 +125,7 @@ class RedBase extends Base implements RedRobot {
         }
       }
       else if (msg.type == INFORM_ABOUT_TARGET) {
-        println("BASE LOCALISEE... MSG RECU");
+        //println("BASE LOCALISEE... MSG RECU");
 
         // pour prendre en compte les messages d’information au sujet de la position de bases ennemies.
         // Enregistre la position de la base ennemie dans la structure brain
@@ -149,7 +149,7 @@ class RedBase extends Base implements RedRobot {
                 continue;
               }
               informAboutTarget(redRobot, ennemyBase);
-              println("KILL THIS DAMN BASE MSG SENT");
+              //println("KILL THIS DAMN BASE MSG SENT");
           }
         }
       }  }
@@ -203,7 +203,7 @@ class RedExplorer extends Explorer implements RedRobot {
     // depending on the state of the robot
     if (brain[4].x == 1) {
       // go back to base...
-      println("I GO TO BASE o7");
+      //println("I GO TO BASE o7");
       goBackToBase();
     } else {
       // ...or explore randomly
@@ -351,6 +351,7 @@ class RedExplorer extends Explorer implements RedRobot {
       RocketLauncher rocky = (RocketLauncher)oneOf(perceiveRobots(friend, LAUNCHER));
       if (rocky != null)
         // if a rocket launcher is seen, send a message with the localized ennemy robot
+        println("INFORM ABOUT TARGET FROM EXPLORER TO LAUNCHER --> "+bob.who+" en ("+bob.pos.x+","+bob.pos.y+")");
         informAboutTarget(rocky, bob);
     }
   }
@@ -368,14 +369,14 @@ class RedExplorer extends Explorer implements RedRobot {
       // Stock information about localized base
       setTarget(babe.pos, BASE);
       brain[4].x = 1;
-      println("BASE TARGET SET");
+      //println("BASE TARGET SET");
 
       // if one is seen, look for a friend explorer
       Explorer explo = (Explorer)oneOf(perceiveRobots(friend, EXPLORER));
       if (explo != null){
         // if one is seen, send a message with the localized ennemy base
         informAboutTarget(explo, babe);
-        println("EXPLORATOR INFORMED ABOUT ENNEMY BASE");
+        //println("EXPLORATOR INFORMED ABOUT ENNEMY BASE");
       }
       // look for a friend base
       // This condition seems weird as it would mean that we look for our base while perceiving an ennemy base
@@ -383,7 +384,7 @@ class RedExplorer extends Explorer implements RedRobot {
       if (basy != null){
         // if one is seen, send a message with the localized ennemy base
         informAboutTarget(basy, babe);
-        println("BASE ALLIEE LOCALISEE");
+        //println("BASE ALLIEE LOCALISEE");
       }
     }
   }
@@ -647,6 +648,9 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
         brain[0].y = msg.args[1];
         brain[0].z = int(msg.args[2]);
         brain[4].y = 1; // Indique qu'une cible a été localisée
+
+        println("LAUNCHER --- RECEIVE INFORM ABOUT TARGET --> en ("+brain[0].x+","+brain[0].y+")");
+
       }
     }
     // Effacez la file de messages après traitement
@@ -670,28 +674,26 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
     if (brain[4].x == 1) {
       // if in "go back to base" modes
       goBackToBase();
-    }else if(brain[4].y == 1){
-
-      // TODO MAXIME.C  SHIT 
-    } else {
-        // try to find a target
+    } else if(!target()){
+      // try to find a target
       selectTarget();
-
-      // if target identified
-      if (target()) { 
-        // if close enough to the target, shoot
-        if (distance(brain[0]) <=  bulletRange) {
-          launchBullet(towards(brain[0]));
-        } else {
-          // if not close enough, head towards the target...
-          heading = towards(brain[0]);
-          // ...and try to move forward
-          tryToMoveForward();
-        }
-      }else
-        // else explore randomly
-        randomMove(45);
     }
+    if (target()) { // if target identified
+      println("LAUNCHER --- TARGET IDENTIFIED");
+      // if close enough to the target, shoot
+      if (distance(brain[0]) <=  bulletRange) {
+        println("LAUNCHER --- SHOOT");
+        launchBullet(towards(brain[0]));
+        brain[4].y = 0;
+      } else {
+        println("LAUNCHER --- NOT CLOSE ENOUGH");
+        // if not close enough, head towards the target...
+        heading = towards(brain[0]);
+        // ...and try to move forward
+        tryToMoveForward();
+      }
+    } else // else explore randomly
+      randomMove(45);
   }
 
   //
