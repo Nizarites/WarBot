@@ -125,8 +125,6 @@ class RedBase extends Base implements RedRobot {
         }
       }
       else if (msg.type == INFORM_ABOUT_TARGET) {
-        //println("BASE LOCALISEE... MSG RECU");
-
         // pour prendre en compte les messages d’information au sujet de la position de bases ennemies.
         // Enregistre la position de la base ennemie dans la structure brain
         brain[0].x = msg.args[0];
@@ -149,7 +147,6 @@ class RedBase extends Base implements RedRobot {
                 continue;
               }
               informAboutTarget(redRobot, ennemyBase);
-              //println("KILL THIS DAMN BASE MSG SENT");
           }
         }
       }  }
@@ -194,19 +191,17 @@ class RedExplorer extends Explorer implements RedRobot {
   //
   void go() {
     handleMessages();
-
     // if food to deposit or too few energy
     if ((carryingFood > 200) || (energy < 100))
       // time to go back to base
       brain[4].x = 1;
 
     // depending on the state of the robot
+    // go back to base...
     if (brain[4].x == 1) {
-      // go back to base...
-      //println("I GO TO BASE o7");
       goBackToBase();
+    // ...or explore randomly
     } else {
-      // ...or explore randomly
       randomMove(45);
     }
 
@@ -224,11 +219,11 @@ class RedExplorer extends Explorer implements RedRobot {
   
   void handleMessages() {
     Message msg;
-    // pour tous les messages
+    // for each message
     for (int i = 0; i < messages.size(); i++) {
       msg = messages.get(i);
       if (msg.type == INFORM_ABOUT_TARGET) {
-          // Enregistre la position de la cible et son type dans la structure brain
+        // Save target position and its type in the brain structure
         brain[0].x = msg.args[0];
         brain[0].y = msg.args[1];
         brain[0].z = int(msg.args[2]);
@@ -236,9 +231,10 @@ class RedExplorer extends Explorer implements RedRobot {
         brain[4].y = 1; // Indique qu'une cible a été localisée
       }
     }
-    // Effacez la file de messages après traitement
+    // Flush the message queue after processing
     flushMessages();
   }
+
 
   //
   // setTarget
@@ -290,6 +286,9 @@ class RedExplorer extends Explorer implements RedRobot {
       float dist = distance(bob);
 
       if (dist <= 2) {
+        if(this.carryingFood > 0){
+          giveFood(bob, this.carryingFood);
+        }
         // if I am next to the base
         if (energy < 500)
           // if my energy is low, I ask for some more
@@ -351,7 +350,6 @@ class RedExplorer extends Explorer implements RedRobot {
       RocketLauncher rocky = (RocketLauncher)oneOf(perceiveRobots(friend, LAUNCHER));
       if (rocky != null)
         // if a rocket launcher is seen, send a message with the localized ennemy robot
-        println("INFORM ABOUT TARGET FROM EXPLORER TO LAUNCHER --> "+bob.who+" en ("+bob.pos.x+","+bob.pos.y+")");
         informAboutTarget(rocky, bob);
     }
   }
@@ -369,14 +367,12 @@ class RedExplorer extends Explorer implements RedRobot {
       // Stock information about localized base
       setTarget(babe.pos, BASE);
       brain[4].x = 1;
-      //println("BASE TARGET SET");
 
       // if one is seen, look for a friend explorer
       Explorer explo = (Explorer)oneOf(perceiveRobots(friend, EXPLORER));
       if (explo != null){
         // if one is seen, send a message with the localized ennemy base
         informAboutTarget(explo, babe);
-        //println("EXPLORATOR INFORMED ABOUT ENNEMY BASE");
       }
       // look for a friend base
       // This condition seems weird as it would mean that we look for our base while perceiving an ennemy base
@@ -384,7 +380,6 @@ class RedExplorer extends Explorer implements RedRobot {
       if (basy != null){
         // if one is seen, send a message with the localized ennemy base
         informAboutTarget(basy, babe);
-        //println("BASE ALLIEE LOCALISEE");
       }
     }
   }
@@ -447,6 +442,14 @@ class RedHarvester extends Harvester implements RedRobot {
     if ((b != null) && (distance(b) <= 2))
       // if one is found next to the robot, collect it
       takeFood(b);
+
+    // If harvester has food, give it to nearby explorer
+    if(carryingFood > 200){
+      RedExplorer nearbyExplorer = (RedExplorer) oneOf(this.perceiveRobots(friend, EXPLORER));
+      if(nearbyExplorer != null){
+        giveFood(nearbyExplorer, this.carryingFood);
+      }  
+    }
 
     // if food to deposit or too few energy
     if ((carryingFood > 200) || (energy < 100))
@@ -648,9 +651,6 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
         brain[0].y = msg.args[1];
         brain[0].z = int(msg.args[2]);
         brain[4].y = 1; // Indique qu'une cible a été localisée
-
-        println("LAUNCHER --- RECEIVE INFORM ABOUT TARGET --> en ("+brain[0].x+","+brain[0].y+")");
-
       }
     }
     // Effacez la file de messages après traitement
@@ -679,14 +679,11 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
       selectTarget();
     }
     if (target()) { // if target identified
-      println("LAUNCHER --- TARGET IDENTIFIED");
       // if close enough to the target, shoot
       if (distance(brain[0]) <=  bulletRange) {
-        println("LAUNCHER --- SHOOT");
         launchBullet(towards(brain[0]));
         brain[4].y = 0;
       } else {
-        println("LAUNCHER --- NOT CLOSE ENOUGH");
         // if not close enough, head towards the target...
         heading = towards(brain[0]);
         // ...and try to move forward
