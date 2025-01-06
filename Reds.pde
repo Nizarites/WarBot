@@ -6,7 +6,7 @@
 ///////////////////////////////////////////////////////////////////////////
 
 class RedTeam extends Team {
-  final int MY_CUSTOM_MSG = 5;
+  final int INFORM_ABOUT_COALLITION = 5;
   
   PVector base1, base2;
 
@@ -650,7 +650,7 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
         brain[4].y = 1; // Indique qu'une cible a été localisée
 
         println("LAUNCHER --- RECEIVE INFORM ABOUT TARGET --> en ("+brain[0].x+","+brain[0].y+")");
-
+        
       }
     }
     // Effacez la file de messages après traitement
