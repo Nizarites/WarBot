@@ -396,11 +396,11 @@ class RedExplorer extends Explorer implements RedRobot {
   //
   void tryToMoveForward() {
     // if there is an obstacle ahead, rotate randomly
-    if (!freeAhead(speed) || perceiveRobots(friend) != null)
+    if (!freeAhead(speed))
       right(random(360));
 
     // if there is no obstacle ahead, move forward at full speed
-    if (freeAhead(speed) && perceiveRobots(friend) != null )
+    if (freeAhead(speed))
       forward(speed);
   }
 }
@@ -563,12 +563,12 @@ class RedHarvester extends Harvester implements RedRobot {
   // > try to move forward after having checked that no obstacle is in front
   //
   void tryToMoveForward() {
-     // if there is an obstacle ahead, rotate randomly
-    if (!freeAhead(speed) || perceiveRobots(friend) != null)
+    // if there is an obstacle ahead, rotate randomly
+    if (!freeAhead(speed))
       right(random(360));
 
     // if there is no obstacle ahead, move forward at full speed
-    if (freeAhead(speed) && perceiveRobots(friend) != null )
+    if (freeAhead(speed))
       forward(speed);
   }
 
@@ -777,12 +777,12 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
   // > try to move forward after having checked that no obstacle is in front
   //
   void tryToMoveForward() {
-     // if there is an obstacle ahead, rotate randomly
-    if (!freeAhead(speed) || perceiveRobots(friend) != null)
+    // if there is an obstacle ahead, rotate randomly
+    if (!freeAhead(speed))
       right(random(360));
 
     // if there is no obstacle ahead, move forward at full speed
-    if (freeAhead(speed) && perceiveRobots(friend) != null )
+    if (freeAhead(speed))
       forward(speed);
   }
 }
