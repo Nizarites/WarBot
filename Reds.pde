@@ -6,8 +6,6 @@
 ///////////////////////////////////////////////////////////////////////////
 
 class RedTeam extends Team {
-  final int MY_CUSTOM_MSG = 5;
-  
   PVector base1, base2;
 
   // coordinates of the 2 bases, chosen in the rectangle with corners
@@ -21,6 +19,9 @@ class RedTeam extends Team {
 }
 
 interface RedRobot {
+  final int INFORM_ABOUT_COALLITION = 5;
+  final int INFORM_ABOUT_END_OF_COALLITION = 6;
+
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -152,7 +153,8 @@ class RedBase extends Base implements RedRobot {
               //println("KILL THIS DAMN BASE MSG SENT");
           }
         }
-      }  }
+      }
+      }
     // clear the message queue
     flushMessages();
   }
@@ -351,7 +353,6 @@ class RedExplorer extends Explorer implements RedRobot {
       RocketLauncher rocky = (RocketLauncher)oneOf(perceiveRobots(friend, LAUNCHER));
       if (rocky != null)
         // if a rocket launcher is seen, send a message with the localized ennemy robot
-        println("INFORM ABOUT TARGET FROM EXPLORER TO LAUNCHER --> "+bob.who+" en ("+bob.pos.x+","+bob.pos.y+")");
         informAboutTarget(rocky, bob);
     }
   }
@@ -396,8 +397,10 @@ class RedExplorer extends Explorer implements RedRobot {
   //
   void tryToMoveForward() {
     // if there is an obstacle ahead, rotate randomly
-    if (!freeAhead(speed))
+    while (!freeAhead(speed) || ((Robot)game.minDist(this, game.perceiveRobotsInCone(this, collisionAngle, speed)) != null)){
+      println("COLLISION DETECTED");
       right(random(360));
+    }
 
     // if there is no obstacle ahead, move forward at full speed
     if (freeAhead(speed))
@@ -564,8 +567,10 @@ class RedHarvester extends Harvester implements RedRobot {
   //
   void tryToMoveForward() {
     // if there is an obstacle ahead, rotate randomly
-    if (!freeAhead(speed))
+    while (!freeAhead(speed) || ((Robot)game.minDist(this, game.perceiveRobotsInCone(this, collisionAngle, speed)) != null)){
+      println("COLLISION DETECTED");
       right(random(360));
+    }
 
     // if there is no obstacle ahead, move forward at full speed
     if (freeAhead(speed))
@@ -617,6 +622,8 @@ class RedHarvester extends Harvester implements RedRobot {
 // map of the brain:
 //   0.x / 0.y = position of the target
 //   0.z = breed of the target
+//   1.x = (0 = No Tactical formation | 1 = Tactical formation)
+//   1.y = id of the tactical formation leader 
 //   4.x = (0 = look for target | 1 = go back to base) 
 //   4.y = (0 = no target | 1 = localized target)
 ///////////////////////////////////////////////////////////////////////////
@@ -643,14 +650,22 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
     for (int i = 0; i < messages.size(); i++) {
       msg = messages.get(i);
       if (msg.type == INFORM_ABOUT_TARGET) {
-          // Enregistre la position de la cible et son type dans la structure brain
+        // Enregistre la position de la cible et son type dans la structure brain
         brain[0].x = msg.args[0];
         brain[0].y = msg.args[1];
         brain[0].z = int(msg.args[2]);
         brain[4].y = 1; // Indique qu'une cible a été localisée
 
-        println("LAUNCHER --- RECEIVE INFORM ABOUT TARGET --> en ("+brain[0].x+","+brain[0].y+")");
-
+      }
+      else if (msg.type == INFORM_ABOUT_COALLITION) {
+        // Enregistre la position de la cible et son type dans la structure brain
+        brain[1].x = 1;
+        brain[1].y = int(msg.args[3]); // ça c'est l'id du leader de la formation militaire
+      }
+      else if (msg.type == INFORM_ABOUT_END_OF_COALLITION) {
+        // Enregistre la position de la cible et son type dans la structure brain
+        brain[1].x = 0;
+        brain[1].y = 0;
       }
     }
     // Effacez la file de messages après traitement
@@ -668,33 +683,92 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
     handleMessages();
     // if no energy or no bullets
     if ((energy < 100) || (bullets == 0))
+    {
+      // get out of the coalliton
+      brain[1].x = 0; 
+      brain[1].y = 0; 
       // go back to the base
       brain[4].x = 1;
-
+    }
     if (brain[4].x == 1) {
+      // get out of the coalliton
+      brain[1].x = 0;
+      brain[1].y = 0; 
       // if in "go back to base" modes
       goBackToBase();
     } else if(!target()){
       // try to find a target
       selectTarget();
+      // We check if any ally are in range to make a coallition 
+      lookForCoallition();
     }
     if (target()) { // if target identified
-      println("LAUNCHER --- TARGET IDENTIFIED");
+      // Informer la coalition qu'une cible à été detecté, si on a un leader de coallition
+      if (coallition() && brain[1].y != 0) {
+        informLeaderAboutTarget();
+      }
+
       // if close enough to the target, shoot
       if (distance(brain[0]) <=  bulletRange) {
-        println("LAUNCHER --- SHOOT");
         launchBullet(towards(brain[0]));
         brain[4].y = 0;
       } else {
-        println("LAUNCHER --- NOT CLOSE ENOUGH");
         // if not close enough, head towards the target...
         heading = towards(brain[0]);
         // ...and try to move forward
         tryToMoveForward();
       }
-    } else // else explore randomly
+    } else if(coallition() && brain[1].y != 0) {
+      // Suivre l'informateur de la coallition si on en a un
+      moveToLeader();    
+    }
+    else {// else explore randomly
       randomMove(45);
+    }
   }
+  
+  // lookForCoallition
+  // ============
+  // > try to localize a ally to make a coallition
+  //
+    void lookForCoallition() {
+      while(perceiveRobots(friend, LAUNCHER) != null)
+      {
+        // look for the closest ally rocket launcher
+        RocketLauncher ally = (RocketLauncher)minDist(perceiveRobots(friend, LAUNCHER));
+        if (ally != null && distance(ally) < messageRange) {
+          // if one is found within message range, send a coallition message
+          informAboutCoallition(ally, this);
+          brain[1].x = 1; // Notre robot enregistre le fait d'etre en coalition 
+        }
+      }
+    }
+  
+  // informLeaderAboutTarget
+  // ============
+  // > try to inform the leader of the coallition about the target
+  //
+  void informLeaderAboutTarget(){
+    Robot leader = game.robots.get(int(brain[1].y)); //Récupère le robot leader
+
+       //Récupère la target identifée
+       Robot target = null; 
+       ArrayList<Robot> rob = new ArrayList<>();
+       for(Robot r : game.robots)
+        if(r.ennemy == ennemy)
+          rob.add(r);
+
+        for (Robot ennemyRobot : rob) {
+          if (ennemyRobot.pos.equals(brain[0])) {
+            target = ennemyRobot;
+            break;
+          }
+        }
+
+        if(target != null)
+         informAboutTarget(leader, target);
+  }
+
 
   //
   // selectTarget
@@ -714,6 +788,18 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
     } else
       // no target found
       brain[4].y = 0;
+  }
+
+  // moveToLeader
+  // ============
+  // > move towards the leader
+  //
+  void moveToLeader() {
+    // head towards the leader
+    Robot leader = game.robots.get(int(brain[1].y));
+    heading = towards(leader.pos) + random(-radians(20), radians(20));
+    // try to move forward
+    tryToMoveForward();
   }
 
 
@@ -739,6 +825,19 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
   //
   boolean target() {
     return (brain[4].y == 1);
+  }
+
+    //
+  // coallition
+  // ======
+  // > checks if we are in coallition
+  //
+  // output
+  // ------
+  // > true if we are / false if not
+  //
+  boolean coallition() {
+    return (brain[1].x == 1);
   }
 
   //
@@ -778,11 +877,63 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
   //
   void tryToMoveForward() {
     // if there is an obstacle ahead, rotate randomly
-    if (!freeAhead(speed))
+    while (!freeAhead(speed) || ((Robot)game.minDist(this, game.perceiveRobotsInCone(this, collisionAngle, speed)) != null)){
+      println("COLLISION DETECTED");
       right(random(360));
+    }
 
     // if there is no obstacle ahead, move forward at full speed
     if (freeAhead(speed))
       forward(speed);
   }
+
+
+  
+  // informAboutCoallition
+  // =================
+  // > sends a INFORM_ABOUT_COALLITION message to another robot
+  //
+  // input
+  // -----
+  // > bob = the receiver
+  // > target = the target robot
+  //
+  void informAboutCoallition(Robot bob, Robot target) {
+    // check that bob and target both exist and distance less than max range
+    if ((bob != null) && (target != null) && (distance(bob) < messageRange)) {
+      // build the message...
+      float[] args = new float[4];
+      args[0] = target.pos.x;
+      args[1] = target.pos.y;
+      args[2] = target.breed;
+      args[3] = target.who;
+      Message msg = new Message(INFORM_ABOUT_COALLITION, who, bob.who, args);
+      // ...and add it to bob's messages queue
+      bob. messages.add(msg);
+    }
+  }
+
+  // informAboutEndOfCoallition
+  // =================
+  // > sends a INFORM_ABOUT_END_OF_COALLITION message to another robot
+  //
+  // input
+  // -----
+  // > bob = the receiver
+  // > target = the target robot
+  //
+  void informAboutEndOfCoallition(Robot bob, Robot target) {
+  // check that bob and target both exist and distance less than max range
+  if ((bob != null) && (target != null) && (distance(bob) < messageRange)) {
+    // build the message...
+    float[] args = new float[4];
+    args[0] = target.pos.x;
+    args[1] = target.pos.y;
+    args[2] = target.breed;
+    args[3] = target.who;
+    Message msg = new Message(INFORM_ABOUT_END_OF_COALLITION, who, bob.who, args);
+    // ...and add it to bob's messages queue
+    bob. messages.add(msg);
+  }
+}
 }
