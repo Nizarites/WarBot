@@ -6,8 +6,6 @@
 ///////////////////////////////////////////////////////////////////////////
 
 class RedTeam extends Team {
-  final int MY_CUSTOM_MSG = 5;
-  
   PVector base1, base2;
 
   // coordinates of the 2 bases, chosen in the rectangle with corners
@@ -21,11 +19,19 @@ class RedTeam extends Team {
 }
 
 interface RedRobot {
+  final int INFORM_ABOUT_COALLITION = 5;
+  final int INFORM_ABOUT_END_OF_COALLITION = 6;
+  final int INFORM_ABOUT_TARGET_URGENCY = 7;
+
 }
 
 ///////////////////////////////////////////////////////////////////////////
 //
 // The code for the green bases
+// map of the brain:
+//   0 = position of one ennemy base
+//   1 = position of the other ennemy base
+//   4 = the number of ennemy bases known
 //
 ///////////////////////////////////////////////////////////////////////////
 class RedBase extends Base implements RedRobot {
@@ -58,7 +64,6 @@ class RedBase extends Base implements RedRobot {
   void go() {
     // handle received messages 
     handleMessages();
-
     // creates new robots depending on energy and the state of brain[5]
     if ((brain[5].x > 0) && (energy >= 1000 + harvesterCost)) {
       // 1st priority = creates harvesters 
@@ -68,21 +73,22 @@ class RedBase extends Base implements RedRobot {
       // 2nd priority = creates rocket launchers 
       if (newRocketLauncher())
         brain[5].y--;
-    } else if ((brain[5].z > 0) && (energy >= 1000 + explorerCost)) {
+    } else if ((brain[5].z > 0) && (energy >= 1000 + explorerCost) && brain[4].y != 2) {
       // 3rd priority = creates explorers 
       if (newExplorer())
         brain[5].z--;
     } else if (energy > 12000) {
       // if no robot in the pipe and enough energy 
-      if ((int)random(2) == 0)
+      if ((int)random(2) == 0){
         // creates a new harvester with 50% chance
         brain[5].x++;
-      else if ((int)random(2) == 0)
-        // creates a new rocket launcher with 25% chance
+      } else if ((int)random(2) == 0 || brain[4].y == 2){
+        // creates a new rocket launcher with 25% chance or if all bases are known
         brain[5].y++;
-      else
+      } else {
         // creates a new explorer with 25% chance
         brain[5].z++;
+      }
     }
 
     // creates new bullets and fafs if the stock is low and enought energy
@@ -98,6 +104,28 @@ class RedBase extends Base implements RedRobot {
       // launch a faf if no friend robot on the trajectory...
       if (perceiveRobotsInCone(friend, heading) == null)
         launchFaf(bob);
+      else {
+        Robot rocketL = (Robot) minDist(perceiveRobots(friend, LAUNCHER));
+        if(rocketL != null){
+          informAboutTargetImmediatly(rocketL, bob);
+        }
+      }
+    }
+
+    // if ally rocket lancher in the area of perception and we already know at least one base
+    if(brain[4].y != 0){
+       ArrayList<Robot> bobs = perceiveRobots(ennemy, LAUNCHER);
+      if(bobs != null){
+        for(Robot rocketL : bobs){
+          int base = 0;
+          if(brain[4].y == 2){
+            base = (int)random(2);
+          } else if(brain[1].x != 0 && brain[1].y != 0){
+            base = 1;
+          }
+          informAboutTargetImmediatly(rocketL, game.getRobot(int(brain[base].z)));
+        }
+      }
     }
   }
 
@@ -127,11 +155,22 @@ class RedBase extends Base implements RedRobot {
       else if (msg.type == INFORM_ABOUT_TARGET) {
         // pour prendre en compte les messages d’information au sujet de la position de bases ennemies.
         // Enregistre la position de la base ennemie dans la structure brain
-        brain[0].x = msg.args[0];
-        brain[0].y = msg.args[1];
-        brain[0].z = BASE;
-        brain[4].y = 1; // Indique qu'une cible a été localisée
-
+        if((brain[0].x == msg.args[0] && brain[0].y == msg.args[1]) || (brain[1].x == msg.args[0] && brain[1].y == msg.args[1])){ 
+          //La base est déjà connue
+          //on skip
+        } else if(brain[4].y == 1){
+          brain[1].x = msg.args[0];
+          brain[1].y = msg.args[1];
+          brain[1].z = msg.args[3];
+          brain[4].y += 1;
+        } else {
+          brain[0].x = msg.args[0];
+          brain[0].y = msg.args[1];
+          brain[0].z = msg.args[3];
+          brain[4].y += 1;
+        }
+        
+        
         // Envoie un message à tous les robots pour les informer de la position de la base ennemie présente dans sa zone de perception
         Robot ennemyBase = null;
         for (Robot greenBase : game.greenBases) {
@@ -142,16 +181,44 @@ class RedBase extends Base implements RedRobot {
         }
 
         if (ennemyBase != null) {
-          for (Robot redRobot : (ArrayList<Robot>) this.perceiveRobots(friend)) {
-              if(redRobot instanceof RedExplorer){
-                continue;
+          ArrayList<Robot> robots = this.perceiveRobots(friend, LAUNCHER);
+          if(robots != null){
+            for (Robot allyRobot : robots ) {
+              if(allyRobot != null){
+                informAboutTarget(allyRobot, ennemyBase);
               }
-              informAboutTarget(redRobot, ennemyBase);
+            }
           }
         }
-      }  }
+      }
+      }
     // clear the message queue
     flushMessages();
+  }
+
+  //
+  // informAboutTargetImmediatly
+  // =================
+  // > sends a INFORM_ABOUT_TARGET_URGENCY message to another robot
+  //
+  // input
+  // -----
+  // > bob = the receiver
+  // > target = the target robot
+  //
+  void informAboutTargetImmediatly(Robot bob, Robot target) {
+    // check that bob and target both exist and distance less than max range
+    if ((bob != null) && (target != null) && (distance(bob) < messageRange)) {
+      // build the message...
+      float[] args = new float[4];
+      args[0] = target.pos.x;
+      args[1] = target.pos.y;
+      args[2] = target.breed;
+      args[3] = target.who;
+      Message msg = new Message(INFORM_ABOUT_TARGET_URGENCY, who, bob.who, args);
+      // ...and add it to bob's messages queue
+      bob. messages.add(msg);
+    }
   }
 }
 
@@ -191,6 +258,7 @@ class RedExplorer extends Explorer implements RedRobot {
   //
   void go() {
     handleMessages();
+
     // if food to deposit or too few energy
     if ((carryingFood > 200) || (energy < 100))
       // time to go back to base
@@ -219,7 +287,7 @@ class RedExplorer extends Explorer implements RedRobot {
   
   void handleMessages() {
     Message msg;
-    // for each message
+    // for each messages
     for (int i = 0; i < messages.size(); i++) {
       msg = messages.get(i);
       if (msg.type == INFORM_ABOUT_TARGET) {
@@ -234,7 +302,6 @@ class RedExplorer extends Explorer implements RedRobot {
     // Flush the message queue after processing
     flushMessages();
   }
-
 
   //
   // setTarget
@@ -285,11 +352,12 @@ class RedExplorer extends Explorer implements RedRobot {
       // if there is one (not all of my bases have been destroyed)
       float dist = distance(bob);
 
+      // if I am next to the base
       if (dist <= 2) {
         if(this.carryingFood > 0){
+          // I give the food
           giveFood(bob, this.carryingFood);
         }
-        // if I am next to the base
         if (energy < 500)
           // if my energy is low, I ask for some more
           askForEnergy(bob, 1500 - energy);
@@ -303,6 +371,23 @@ class RedExplorer extends Explorer implements RedRobot {
         heading = towards(bob) + random(-radians(20), radians(20));
         // ...and try to move forward 
         tryToMoveForward();
+        if(brain[4].y == 1 && brain[0].z == BASE){
+          ArrayList<Robot> launcherAlly = perceiveRobots(friend, LAUNCHER);
+          if(launcherAlly != null){
+            Robot ennemyBase = null;
+            for (Robot greenBase : game.greenBases) {
+              if (greenBase.pos.equals(brain[0])) {
+                ennemyBase = greenBase;
+                break;
+              }
+            }
+            if(ennemyBase != null){
+              for(Robot ally : launcherAlly){
+                  informAboutTarget(ally, ennemyBase);
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -391,8 +476,9 @@ class RedExplorer extends Explorer implements RedRobot {
   //
   void tryToMoveForward() {
     // if there is an obstacle ahead, rotate randomly
-    if (!freeAhead(speed))
+    while (!freeAhead(speed) || ((Robot)game.minDist(this, game.perceiveRobotsInCone(this, collisionAngle, speed)) != null)){
       right(random(360));
+    }
 
     // if there is no obstacle ahead, move forward at full speed
     if (freeAhead(speed))
@@ -442,8 +528,7 @@ class RedHarvester extends Harvester implements RedRobot {
     if ((b != null) && (distance(b) <= 2))
       // if one is found next to the robot, collect it
       takeFood(b);
-
-    // If harvester has food, give it to nearby explorer
+    // if harvester has food, give it to nearby explorer
     if(carryingFood > 200){
       RedExplorer nearbyExplorer = (RedExplorer) oneOf(this.perceiveRobots(friend, EXPLORER));
       if(nearbyExplorer != null){
@@ -567,8 +652,9 @@ class RedHarvester extends Harvester implements RedRobot {
   //
   void tryToMoveForward() {
     // if there is an obstacle ahead, rotate randomly
-    if (!freeAhead(speed))
+    while (!freeAhead(speed) || ((Robot)game.minDist(this, game.perceiveRobotsInCone(this, collisionAngle, speed)) != null)){
       right(random(360));
+    }
 
     // if there is no obstacle ahead, move forward at full speed
     if (freeAhead(speed))
@@ -620,6 +706,8 @@ class RedHarvester extends Harvester implements RedRobot {
 // map of the brain:
 //   0.x / 0.y = position of the target
 //   0.z = breed of the target
+//   1.x = (0 = No Tactical formation | 1 = Tactical formation)
+//   1.y = id of the tactical formation leader 
 //   4.x = (0 = look for target | 1 = go back to base) 
 //   4.y = (0 = no target | 1 = localized target)
 ///////////////////////////////////////////////////////////////////////////
@@ -645,16 +733,46 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
     // pour tous les messages
     for (int i = 0; i < messages.size(); i++) {
       msg = messages.get(i);
-      if (msg.type == INFORM_ABOUT_TARGET) {
-          // Enregistre la position de la cible et son type dans la structure brain
+      if (msg.type == INFORM_ABOUT_TARGET_URGENCY) {
+        // Enregistre la position de la cible et son type dans la structure brain
         brain[0].x = msg.args[0];
         brain[0].y = msg.args[1];
         brain[0].z = int(msg.args[2]);
         brain[4].y = 1; // Indique qu'une cible a été localisée
+        if(brain[1].x == 1)
+          informLeaderAboutTarget();
+      } 
+      else if (msg.type == INFORM_ABOUT_TARGET) {
+        // Enregistre la position de la cible et son type dans la structure brain
+        if(brain[0].z == BASE && isThereEnnemiesBases()) continue; 
+        else {
+          brain[0].x = msg.args[0];
+          brain[0].y = msg.args[1];
+          brain[0].z = int(msg.args[2]);
+          brain[4].y = 1; // Indique qu'une cible a été localisée
+        }
+      } 
+      else if (msg.type == INFORM_ABOUT_COALLITION && brain[1].x == 0) {
+        // Enregistre la position de la cible et son type dans la structure brain
+        brain[1].x = 1;
+        brain[1].y = int(msg.args[3]); // ça c'est l'id du leader de la formation militaire
+      }
+      else if (msg.type == INFORM_ABOUT_END_OF_COALLITION) {
+        // Enregistre la position de la cible et son type dans la structure brain
+        brain[1].x = 0;
+        brain[1].y = 0;
       }
     }
     // Effacez la file de messages après traitement
     flushMessages();
+  }
+
+  boolean isThereEnnemiesBases(){
+    for(Robot r : game.robots){
+      if(r.colour == ennemy && r.breed == BASE)
+        return true;
+    }
+    return false;
   }
 
   //
@@ -668,17 +786,42 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
     handleMessages();
     // if no energy or no bullets
     if ((energy < 100) || (bullets == 0))
+    {
+      // get out of the coalliton
+      brain[1].x = 0; 
+      brain[1].y = 0; 
       // go back to the base
       brain[4].x = 1;
-
+    }
     if (brain[4].x == 1) {
+      // get out of the coalliton
+      brain[1].x = 0;
+      brain[1].y = 0; 
       // if in "go back to base" modes
       goBackToBase();
     } else if(!target()){
       // try to find a target
       selectTarget();
+      // We check if any ally are in range to make a coallition 
+      lookForCoallition();
     }
     if (target()) { // if target identified
+      //Check if we see ennemy base
+      ArrayList<Robot> ennemiesBase = perceiveRobots(ennemy, BASE);
+      if(ennemiesBase != null){
+        Robot bob = ennemiesBase.get(0);
+        brain[0].x = bob.pos.x;
+        brain[0].y = bob.pos.y;
+        brain[0].z = bob.breed;
+        // locks the target
+        brain[4].y = 1;
+      }
+
+      //Informed the coallition that a target has been detected, if we have a leader
+      if (coallition() && brain[1].y == 1) {
+        informLeaderAboutTarget();
+      }
+
       // if close enough to the target, shoot
       if (distance(brain[0]) <=  bulletRange) {
         launchBullet(towards(brain[0]));
@@ -689,9 +832,66 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
         // ...and try to move forward
         tryToMoveForward();
       }
-    } else // else explore randomly
+    } else if(coallition() && brain[1].y != 0) {
+      // Follow the leader if there is one
+      moveToLeader();    
+    }
+    else {// else explore randomly
       randomMove(45);
+    }
   }
+  
+  // lookForCoallition
+  // ============
+  // > try to localize a ally to make a coallition
+  //
+    void lookForCoallition() {
+      ArrayList<Robot> allyInformedAboutCoallition = perceiveRobots(friend, LAUNCHER);
+      if(allyInformedAboutCoallition != null){
+        for(Robot ally : allyInformedAboutCoallition)
+        {
+          // look for the closest ally rocket launcher
+          if (ally != null && distance(ally) < messageRange) {
+            // if one is found within message range, send a coallition message
+            informAboutCoallition(ally, this); //ICI OUT OF RANGE
+            brain[1].x = 1; // Notre robot enregistre le fait d'etre en coalition 
+            brain[1].y = 0;
+          }
+        }
+      }
+    }
+
+  // getRobot
+  // ============
+  // > try to inform the leader of the coallition about the target
+  //
+  
+  // informLeaderAboutTarget
+  // ============
+  // > try to inform the leader of the coallition about the target
+  //
+  void informLeaderAboutTarget(){
+      Robot leader = game.getRobot(int(brain[1].y)); //Récupère le robot leader
+
+       //Récupère la target identifée
+       Robot target = null; 
+       ArrayList<Robot> rob = new ArrayList<>();
+       for(Robot r : game.robots)
+        if(r.ennemy == ennemy)
+          rob.add(r);
+
+        for (Robot ennemyRobot : rob) {
+          if (ennemyRobot.pos.equals(brain[0])) {
+            target = ennemyRobot;
+            break;
+          }
+        }
+
+        if(target != null){
+         informAboutTargetImmediatly(leader, target);
+        }
+  }
+
 
   //
   // selectTarget
@@ -699,18 +899,46 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
   // > try to localize a target
   //
   void selectTarget() {
-    // look for the closest ennemy robot
-    Robot bob = (Robot)minDist(perceiveRobots(ennemy));
-    if (bob != null) {
-      // if one found, record the position and breed of the target
+    // Check if we see base
+    ArrayList<Robot> ennemiesBase = perceiveRobots(ennemy, BASE);
+    if(ennemiesBase != null){
+      Robot bob = ennemiesBase.get(0);
       brain[0].x = bob.pos.x;
       brain[0].y = bob.pos.y;
       brain[0].z = bob.breed;
       // locks the target
       brain[4].y = 1;
-    } else
-      // no target found
-      brain[4].y = 0;
+      Robot explo = (Robot)minDist(perceiveRobots(friend, EXPLORER));
+      if(explo != null){
+        informAboutTarget(explo, bob);
+      }
+
+    } else {
+      // look for the closest ennemy robot
+      Robot bob = (Robot)minDist(perceiveRobots(ennemy));
+      if (bob != null) {
+        // if one found, record the position and breed of the target
+        brain[0].x = bob.pos.x;
+        brain[0].y = bob.pos.y;
+        brain[0].z = bob.breed;
+        // locks the target
+        brain[4].y = 1;
+      } else
+        // no target found
+        brain[4].y = 0;
+      }    
+  }
+
+  // moveToLeader
+  // ============
+  // > move towards the leader
+  //
+  void moveToLeader() {
+    // head towards the leader
+    Robot leader = game.getRobot(int(brain[1].y));
+    heading = towards(leader.pos) + random(-radians(20), radians(20));
+    // try to move forward
+    tryToMoveForward();
   }
 
 
@@ -736,6 +964,19 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
   //
   boolean target() {
     return (brain[4].y == 1);
+  }
+
+    //
+  // coallition
+  // ======
+  // > checks if we are in coallition
+  //
+  // output
+  // ------
+  // > true if we are / false if not
+  //
+  boolean coallition() {
+    return (brain[1].x == 1);
   }
 
   //
@@ -775,11 +1016,89 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
   //
   void tryToMoveForward() {
     // if there is an obstacle ahead, rotate randomly
-    if (!freeAhead(speed))
+    while (!freeAhead(speed) || ((Robot)game.minDist(this, game.perceiveRobotsInCone(this, collisionAngle, speed)) != null)){
       right(random(360));
+    }
 
     // if there is no obstacle ahead, move forward at full speed
     if (freeAhead(speed))
       forward(speed);
   }
+
+
+  
+  // informAboutCoallition
+  // =================
+  // > sends a INFORM_ABOUT_COALLITION message to another robot
+  //
+  // input
+  // -----
+  // > bob = the receiver
+  // > target = the target robot
+  //
+  void informAboutCoallition(Robot bob, Robot target) {
+    // check that bob and target both exist and distance less than max range
+    if ((bob != null) && (target != null) && (distance(bob) < messageRange)) {
+      // build the message...
+      float[] args = new float[4];
+      args[0] = target.pos.x;
+      args[1] = target.pos.y;
+      args[2] = target.breed;
+      args[3] = target.who;
+      Message msg = new Message(INFORM_ABOUT_COALLITION, who, bob.who, args);
+
+      // ...and add it to bob's messages queue
+      bob. messages.add(msg);
+    }
+  }
+
+  // informAboutEndOfCoallition
+  // =================
+  // > sends a INFORM_ABOUT_END_OF_COALLITION message to another robot
+  //
+  // input
+  // -----
+  // > bob = the receiver
+  // > target = the target robot
+  //
+  void informAboutEndOfCoallition(Robot bob, Robot target) {
+    // check that bob and target both exist and distance less than max range
+    if ((bob != null) && (target != null) && (distance(bob) < messageRange)) {
+      // build the message...
+      float[] args = new float[4];
+      args[0] = target.pos.x;
+      args[1] = target.pos.y;
+      args[2] = target.breed;
+      args[3] = target.who;
+      Message msg = new Message(INFORM_ABOUT_END_OF_COALLITION, who, bob.who, args);
+      // ...and add it to bob's messages queue
+      bob. messages.add(msg);
+    }
+  }
+
+  //
+  // informAboutTargetImmediatly
+  // =================
+  // > sends a INFORM_ABOUT_TARGET_URGENCY message to another robot
+  //
+  // input
+  // -----
+  // > bob = the receiver
+  // > target = the target robot
+  //
+  void informAboutTargetImmediatly(Robot bob, Robot target) {
+    // check that bob and target both exist and distance less than max range
+    if ((bob != null) && (target != null) && (distance(bob) < messageRange)) {
+      // build the message...
+      float[] args = new float[4];
+      args[0] = target.pos.x;
+      args[1] = target.pos.y;
+      args[2] = target.breed;
+      args[3] = target.who;
+      Message msg = new Message(INFORM_ABOUT_TARGET_URGENCY, who, bob.who, args);
+      // ...and add it to bob's messages queue
+      bob. messages.add(msg);
+    }
+  }
+  
 }
