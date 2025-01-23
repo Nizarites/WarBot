@@ -20,8 +20,10 @@ class RedTeam extends Team {
 
 interface RedRobot {
   final int INFORM_ABOUT_COALLITION = 5;
-  final int INFORM_ABOUT_END_OF_COALLITION = 6;
-  final int INFORM_ABOUT_TARGET_URGENCY = 7;
+  final int INFORM_ABOUT_QUIT_COALLITION = 6;
+  final int INFORM_ABOUT_JOIN_COALLITION = 7;
+  final int INFORM_ABOUT_TARGET_COALLITION = 8;
+  final int INFORM_ABOUT_TARGET_URGENCY = 9;
 
 }
 
@@ -708,6 +710,8 @@ class RedHarvester extends Harvester implements RedRobot {
 //   0.z = breed of the target
 //   1.x = (0 = No Tactical formation | 1 = Tactical formation)
 //   1.y = id of the tactical formation leader 
+//   1.z = id of his tactical formation junior
+//   2.x = (0 = follow leader | 1 = go attack with coallition)
 //   4.x = (0 = look for target | 1 = go back to base) 
 //   4.y = (0 = no target | 1 = localized target)
 ///////////////////////////////////////////////////////////////////////////
@@ -735,32 +739,46 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
       msg = messages.get(i);
       if (msg.type == INFORM_ABOUT_TARGET_URGENCY) {
         // Enregistre la position de la cible et son type dans la structure brain
-        brain[0].x = msg.args[0];
-        brain[0].y = msg.args[1];
-        brain[0].z = int(msg.args[2]);
-        brain[4].y = 1; // Indique qu'une cible a été localisée
-        if(brain[1].x == 1)
+        setPositionXYTarget(msg.args[0], msg.args[1]);
+        setBreedTarget(int(msg.args[2]));
+        setTarget(true);
+        if(amIInCoalition() && getIdLeader() != who)
           informLeaderAboutTarget();
+      } else if (msg.type == INFORM_ABOUT_TARGET_COALLITION && msg.alice == getIdLeader() && amIInCoalition()) {
+        // Enregistre la position de la cible et son type
+        setPositionXYTarget(msg.args[0], msg.args[1]);
+        setBreedTarget(int(msg.args[2]));
+        setTarget(true);
+        setAttackWithCoalition(true);
+        if(getIdJunior() != 0)
+          launchInformAboutTargetCoalition();
       } 
       else if (msg.type == INFORM_ABOUT_TARGET) {
-        // Enregistre la position de la cible et son type dans la structure brain
-        if(brain[0].z == BASE && isThereEnnemiesBases()) continue; 
+        // Enregistre la position de la cible et son type
+        if(getBreedTarget() == BASE && isThereEnnemiesBases()) continue; 
         else {
-          brain[0].x = msg.args[0];
-          brain[0].y = msg.args[1];
-          brain[0].z = int(msg.args[2]);
-          brain[4].y = 1; // Indique qu'une cible a été localisée
+          setPositionXYTarget(msg.args[0], msg.args[1]);
+          setBreedTarget(int(msg.args[2]));
+          setTarget(true);
         }
       } 
-      else if (msg.type == INFORM_ABOUT_COALLITION && brain[1].x == 0) {
-        // Enregistre la position de la cible et son type dans la structure brain
-        brain[1].x = 1;
-        brain[1].y = int(msg.args[3]); // ça c'est l'id du leader de la formation militaire
+      else if (msg.type == INFORM_ABOUT_COALLITION && !amIInCoalition()) {
+        setTacticalFormation(true, msg.alice);
+        if(getIdJunior() != msg.alice){
+          informAboutJoinCoalition(game.getRobot(getIdLeader()));
+        }
+      } else if (msg.type == INFORM_ABOUT_JOIN_COALLITION && getIdJunior() == 0 && getIdLeader() != msg.alice) {
+        if(getIdLeader() == 0)
+          setTacticalFormation(true, who);
+        else setTacticalFormation(true, getIdLeader());
+        updateIdJunior(msg.alice);
       }
-      else if (msg.type == INFORM_ABOUT_END_OF_COALLITION) {
-        // Enregistre la position de la cible et son type dans la structure brain
-        brain[1].x = 0;
-        brain[1].y = 0;
+      else if (msg.type == INFORM_ABOUT_QUIT_COALLITION && amIInCoalition()) {
+        if(getIdLeader() == msg.alice){ // c'est notre leader qui nous envoie un message (update leader)
+          updateIdLeader(int(msg.args[0]));
+        } else if(getIdJunior() == msg.alice){ // c'est un sous fifre qui quitte (update sous fifre)
+          updateIdJunior(int(msg.args[1]));
+        }
       }
     }
     // Effacez la file de messages après traitement
@@ -787,16 +805,20 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
     // if no energy or no bullets
     if ((energy < 100) || (bullets == 0))
     {
-      // get out of the coalliton
-      brain[1].x = 0; 
-      brain[1].y = 0; 
       // go back to the base
-      brain[4].x = 1;
+      setBackHome(true);
     }
-    if (brain[4].x == 1) {
+
+    if (backToBase()) {
       // get out of the coalliton
-      brain[1].x = 0;
-      brain[1].y = 0; 
+      if(amIInCoalition()){
+        setTacticalFormation(false, 0);
+        updateIdJunior(0);
+        updateIdLeader(0);
+        setAttackWithCoalition(false);
+        launchInformAboutQuitCoalition();
+      }
+      
       // if in "go back to base" modes
       goBackToBase();
     } else if(!target()){
@@ -810,34 +832,46 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
       ArrayList<Robot> ennemiesBase = perceiveRobots(ennemy, BASE);
       if(ennemiesBase != null){
         Robot bob = ennemiesBase.get(0);
-        brain[0].x = bob.pos.x;
-        brain[0].y = bob.pos.y;
-        brain[0].z = bob.breed;
-        // locks the target
-        brain[4].y = 1;
+        setPositionXYTarget(bob.pos.x, bob.pos.y);
+        setBreedTarget(bob.breed);
       }
 
       //Informed the coallition that a target has been detected, if we have a leader
-      if (coallition() && brain[1].y == 1) {
+      if (amIInCoalition() && getIdLeader() != who) { //Junior mode
         informLeaderAboutTarget();
-      }
-
-      // if close enough to the target, shoot
-      if (distance(brain[0]) <=  bulletRange) {
-        launchBullet(towards(brain[0]));
-        brain[4].y = 0;
+        if(attackWithCoalition()){
+          attackTarget();
+        } else {
+          moveToLeader();    
+        }
+      } else if(amIInCoalition() && getIdLeader() == who){ // THE leader mode
+        launchInformAboutTargetCoalition();
+        attackTarget();
       } else {
-        // if not close enough, head towards the target...
-        heading = towards(brain[0]);
-        // ...and try to move forward
-        tryToMoveForward();
+        attackTarget();
       }
-    } else if(coallition() && brain[1].y != 0) {
+    } else if(amIInCoalition() && getIdLeader() != who) { //Junior mode
       // Follow the leader if there is one
       moveToLeader();    
-    }
-    else {// else explore randomly
+    } else {// else explore randomly
       randomMove(45);
+    }
+  }
+
+  // attackTarget
+  // ============
+  // > try to attack the localized target
+  //
+  void attackTarget(){
+    // if close enough to the target, shoot
+    if (distance(brain[0]) <=  bulletRange) {
+      launchBullet(towards(brain[0]));
+      setTarget(false);
+    } else {
+      // if not close enough, head towards the target...
+      heading = towards(brain[0]);
+      // ...and try to move forward
+      tryToMoveForward();
     }
   }
   
@@ -851,27 +885,20 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
         for(Robot ally : allyInformedAboutCoallition)
         {
           // look for the closest ally rocket launcher
-          if (ally != null && distance(ally) < messageRange) {
+          if (ally != null && ally.who != getIdJunior() && ally.who != getIdLeader() && distance(ally) < messageRange) {
             // if one is found within message range, send a coallition message
-            informAboutCoallition(ally, this); //ICI OUT OF RANGE
-            brain[1].x = 1; // Notre robot enregistre le fait d'etre en coalition 
-            brain[1].y = 0;
+            informAboutCoallition(ally);
           }
         }
       }
     }
-
-  // getRobot
-  // ============
-  // > try to inform the leader of the coallition about the target
-  //
   
   // informLeaderAboutTarget
   // ============
   // > try to inform the leader of the coallition about the target
   //
   void informLeaderAboutTarget(){
-      Robot leader = game.getRobot(int(brain[1].y)); //Récupère le robot leader
+      Robot leader = game.getRobot(getIdLeader()); //Récupère le robot leader
 
        //Récupère la target identifée
        Robot target = null; 
@@ -892,6 +919,42 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
         }
   }
 
+  // launchInformAboutTargetCoalition
+  // ============
+  // > try to inform my juniors of the coallition about the target
+  //
+  void launchInformAboutTargetCoalition(){
+    //Récupère la target identifée
+    Robot target = null; 
+    for(Robot r : game.robots){
+      if(r.ennemy == ennemy && r.pos.equals(brain[0])){
+        target = r;
+        break;
+      }
+    }
+
+    if(target != null){
+      ArrayList<Robot> robots = perceiveRobots(friend, LAUNCHER);
+      if(robots != null){
+        for(Robot r : robots){
+          informAboutTargetCoalition(r, target);
+        }
+      }
+    }
+  }
+
+  // launchInformAboutQuitCoalition
+  // ============
+  // > try to inform my team that I quit the coalition
+  //
+  void launchInformAboutQuitCoalition(){
+    ArrayList<Robot> robots = perceiveRobots(friend, LAUNCHER);
+    if(robots != null){
+      for(Robot r : robots){
+        informAboutQuitCoalition(r);
+      }
+    }
+  }
 
   //
   // selectTarget
@@ -903,11 +966,10 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
     ArrayList<Robot> ennemiesBase = perceiveRobots(ennemy, BASE);
     if(ennemiesBase != null){
       Robot bob = ennemiesBase.get(0);
-      brain[0].x = bob.pos.x;
-      brain[0].y = bob.pos.y;
-      brain[0].z = bob.breed;
+      setPositionXYTarget(bob.pos.x, bob.pos.y);
+      setBreedTarget(bob.breed);
       // locks the target
-      brain[4].y = 1;
+      setTarget(true);
       Robot explo = (Robot)minDist(perceiveRobots(friend, EXPLORER));
       if(explo != null){
         informAboutTarget(explo, bob);
@@ -918,14 +980,13 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
       Robot bob = (Robot)minDist(perceiveRobots(ennemy));
       if (bob != null) {
         // if one found, record the position and breed of the target
-        brain[0].x = bob.pos.x;
-        brain[0].y = bob.pos.y;
-        brain[0].z = bob.breed;
+        setPositionXYTarget(bob.pos.x, bob.pos.y);
+        setBreedTarget(bob.breed);
         // locks the target
-        brain[4].y = 1;
+        setTarget(true);
       } else
         // no target found
-        brain[4].y = 0;
+        setTarget(false);
       }    
   }
 
@@ -935,10 +996,13 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
   //
   void moveToLeader() {
     // head towards the leader
-    Robot leader = game.getRobot(int(brain[1].y));
-    heading = towards(leader.pos) + random(-radians(20), radians(20));
-    // try to move forward
-    tryToMoveForward();
+    Robot leader = game.getRobot(getIdLeader());
+    if(leader != null){
+      heading = towards(leader.pos) + random(-radians(20), radians(20));
+      // try to move forward
+      tryToMoveForward();
+
+    }
   }
 
 
@@ -951,32 +1015,6 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
     heading = towards(brain[0]) + random(-radians(20), radians(20));
     // try to move forward
     tryToMoveForward();
-  }
-
-  //
-  // target
-  // ======
-  // > checks if a target has been locked
-  //
-  // output
-  // ------
-  // > true if target locket / false if not
-  //
-  boolean target() {
-    return (brain[4].y == 1);
-  }
-
-    //
-  // coallition
-  // ======
-  // > checks if we are in coallition
-  //
-  // output
-  // ------
-  // > true if we are / false if not
-  //
-  boolean coallition() {
-    return (brain[1].x == 1);
   }
 
   //
@@ -997,6 +1035,7 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
           // if energy low, ask for some energy
           askForEnergy(bob, 1500 - energy);
         // go back to "exploration" mode
+        setBackHome(false);
         brain[4].x = 0;
         // make a half turn
         right(180);
@@ -1034,43 +1073,29 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
   // input
   // -----
   // > bob = the receiver
-  // > target = the target robot
   //
-  void informAboutCoallition(Robot bob, Robot target) {
+  void informAboutCoallition(Robot bob) {
     // check that bob and target both exist and distance less than max range
-    if ((bob != null) && (target != null) && (distance(bob) < messageRange)) {
-      // build the message...
-      float[] args = new float[4];
-      args[0] = target.pos.x;
-      args[1] = target.pos.y;
-      args[2] = target.breed;
-      args[3] = target.who;
-      Message msg = new Message(INFORM_ABOUT_COALLITION, who, bob.who, args);
+    if ((bob != null) && (distance(bob) < messageRange)) {
+      Message msg = new Message(INFORM_ABOUT_COALLITION, who, bob.who, new float[1]);
 
       // ...and add it to bob's messages queue
       bob. messages.add(msg);
     }
   }
 
-  // informAboutEndOfCoallition
+  // informAboutJoinCoalition
   // =================
-  // > sends a INFORM_ABOUT_END_OF_COALLITION message to another robot
+  // > sends a INFORM_ABOUT_JOIN_COALLITION message to my leader
   //
   // input
   // -----
   // > bob = the receiver
-  // > target = the target robot
   //
-  void informAboutEndOfCoallition(Robot bob, Robot target) {
+  void informAboutJoinCoalition(Robot bob){
     // check that bob and target both exist and distance less than max range
-    if ((bob != null) && (target != null) && (distance(bob) < messageRange)) {
-      // build the message...
-      float[] args = new float[4];
-      args[0] = target.pos.x;
-      args[1] = target.pos.y;
-      args[2] = target.breed;
-      args[3] = target.who;
-      Message msg = new Message(INFORM_ABOUT_END_OF_COALLITION, who, bob.who, args);
+    if ((bob != null) && (distance(bob) < messageRange)) {
+      Message msg = new Message(INFORM_ABOUT_JOIN_COALLITION, who, bob.who, new float[1]);
       // ...and add it to bob's messages queue
       bob. messages.add(msg);
     }
@@ -1099,6 +1124,261 @@ class RedRocketLauncher extends RocketLauncher implements RedRobot {
       // ...and add it to bob's messages queue
       bob. messages.add(msg);
     }
+  }
+
+  //
+  // informAboutTargetCoalition
+  // =================
+  // > sends a INFORM_ABOUT_TARGET_COALLITION message to another robot
+  //
+  // input
+  // -----
+  // > bob = the receiver
+  // > target = the target robot
+  //
+  void informAboutTargetCoalition(Robot bob, Robot target){
+    if ((bob != null) && (target != null) && (distance(bob) < messageRange)) {
+      // build the message...
+      float[] args = new float[4];
+      args[0] = target.pos.x;
+      args[1] = target.pos.y;
+      args[2] = target.breed;
+      args[3] = target.who;
+      Message msg = new Message(INFORM_ABOUT_TARGET_COALLITION, who, bob.who, args);
+      // ...and add it to bob's messages queue
+      bob. messages.add(msg);
+    }
+   }
+
+   //
+  // informAboutQuitCoalition
+  // =================
+  // > sends a INFORM_ABOUT_QUIT_COALLITION message to another robot
+  //
+  // input
+  // -----
+  // > bob = the receiver
+  //
+  void informAboutQuitCoalition(Robot bob){
+    if ((bob != null) && (distance(bob) < messageRange)) {
+      // build the message...
+      float[] args = new float[2];
+      if(getIdLeader() == who)
+        args[0] = getIdJunior();
+      else 
+        args[0] = getIdLeader();
+      args[1] = getIdJunior();
+      Message msg = new Message(INFORM_ABOUT_QUIT_COALLITION, who, bob.who, args);
+      // ...and add it to bob's messages queue
+      bob. messages.add(msg);
+    }
+   }
+
+
+  //---------- Functions for the brain ----------//
+
+  //
+  // setPositionXYTarget
+  // ======
+  // > change the position of the localized target
+  //
+  void setPositionXYTarget(float x, float y){
+    brain[0].x = x;
+    brain[0].y = y;
+
+    if(amIInCoalition() && getIdLeader() == who){
+        launchInformAboutTargetCoalition();
+    }
+  }
+
+  //
+  // setBreedTarget
+  // ======
+  // > change the breed of the localized target
+  //
+  void setBreedTarget(int breed){
+    brain[0].z = breed;
+  }
+
+  //
+  // setTacticalFormation
+  // ======
+  // > save that I am in a coalition and save my leader
+  //
+  void setTacticalFormation(boolean coalition, int id){
+    if(coalition)
+      brain[1].x = 1;
+    else brain[1].x = 0;
+    updateIdLeader(id);
+  }
+
+  //
+  // updateIdLeader
+  // ======
+  // > save my new leader
+  //
+  void updateIdLeader(int id){
+    brain[1].y = id;
+  }
+
+  //
+  // updateIdJunior
+  // ======
+  // > save my new junior
+  //
+  void updateIdJunior(int id){
+    brain[1].z = id;
+  }
+
+  //
+  // setAttackWithCoalition
+  // ======
+  // > save if I have to attack with my team or follow my leader
+  //
+  void setAttackWithCoalition(boolean attack){
+    if(attack)
+      brain[2].x = 1;
+    else brain[2].x = 0;
+  }
+
+  //
+  // setBackHome
+  // ======
+  // > save if I have to back to home or looking for ennemy
+  //
+  void setBackHome(boolean home){
+    if(home)
+      brain[4].x = 1;
+    else brain[4].x = 0;
+  }
+
+  //
+  // setTarget
+  // ======
+  // > save if I have new target
+  //
+  void setTarget(boolean target){
+    if(target)
+      brain[4].y = 1;
+    else brain[4].y = 0;
+  }
+
+  //
+  // getPositionXTarget
+  // ======
+  // > give the x position of the localized target
+  //
+  // output
+  // ------
+  // > x position
+  //
+  float getPositionXTarget(){
+    return brain[0].x; 
+  }
+
+  //
+  // getPositionYTarget
+  // ======
+  // > give the y position of the localized target
+  //
+  // output
+  // ------
+  // > y position
+  //
+  float getPositinoYTarget(){
+     return brain[0].y; 
+  }
+
+  //
+  // getBreedTarget
+  // ======
+  // > give the breed of the localized target
+  //
+  // output
+  // ------
+  // > breed
+  //
+  int getBreedTarget(){ 
+    return int(brain[0].z); 
+  }
+
+  //
+  // amIInCoalition
+  // ======
+  // > check if i am in a coalition
+  //
+  // output
+  // ------
+  // > true if i am / false if not
+  //
+  boolean amIInCoalition(){ 
+    return brain[1].x==1 ;
+  }
+
+  //
+  // getIdLeader
+  // ======
+  // > give the id of the leader
+  //
+  // output
+  // ------
+  // > id of the leader
+  //
+  int getIdLeader(){ 
+    return int(brain[1].y); 
+  }
+
+  //
+  // getIdJunior
+  // ======
+  // > give the id of the junior
+  //
+  // output
+  // ------
+  // > id of the junior
+  //
+  int getIdJunior(){ 
+    return int(brain[1].z); 
+  }
+
+   //
+  // attackWithCoalition
+  // ======
+  // > check if i have to attack with coalition or follow the leader
+  //
+  // output
+  // ------
+  // > true if we attack // false if not, then i follow the leader
+  //
+  boolean attackWithCoalition(){ 
+    return brain[2].x==1; 
+  }
+
+  //
+  // backToBase
+  // ======
+  // > check if i have to go back to base or looking for target
+  //
+  // output
+  // ------
+  // > true if i got back to base // false if not, then i look for target
+  //
+  boolean backToBase(){ 
+    return brain[4].x==1; 
+  }
+  
+
+  //
+  // target
+  // ======
+  // > checks if a target has been locked
+  //
+  // output
+  // ------
+  // > true if target locket / false if not
+  //
+  boolean target(){
+     return brain[4].y==1; 
   }
   
 }
